@@ -1,20 +1,34 @@
 services:
   - type: web
-    name: family-asset-compass-home
+    name: family-asset-compass-cloud
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: streamlit run app.py --server.address 0.0.0.0 --server.port $PORT
+    startCommand: streamlit run cloud_app.py --server.address 0.0.0.0 --server.port $PORT
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
-
+      - key: DATABASE_URL
+        sync: false
   - type: web
-    name: family-asset-compass-api
+    name: family-asset-compass-cloud-api
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn api.cloud_main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
+      - key: DATABASE_URL
+        sync: false
+  - type: cron
+    name: family-asset-compass-refresh-job
+    runtime: python
+    schedule: "30 10 * * 1-5"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python jobs/refresh_data.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DATABASE_URL
+        sync: false
