@@ -12,8 +12,13 @@ def load_bank_recommendations(data_dir: str | Path = "data") -> pd.DataFrame:
             "bank", "channel", "code", "recommend_level", "recommend_reason", "suitable_for", "bank_tag"
         ])
     df = pd.read_csv(path)
-    df["code"] = df["code"].astype(str).str.zfill(6)
+    df["code"] = _normalize_code_for_merge(df["code"])
     return df
+
+
+def _normalize_code_for_merge(series: pd.Series) -> pd.Series:
+    """Normalize fund codes for joins in deployed environments."""
+    return series.astype(str).str.replace(r"\\.0$", "", regex=True).str.zfill(6)
 
 
 def score_by_preferences(
@@ -36,12 +41,12 @@ def score_by_preferences(
     exclude_brands = exclude_brands or []
 
     df = scored_funds.copy()
-    df["code"] = df["code"].astype(str).str.zfill(6)
+    df["code"] = _normalize_code_for_merge(df["code"])
 
     bank_recommendations = bank_recommendations if bank_recommendations is not None else pd.DataFrame()
     if not bank_recommendations.empty:
         br = bank_recommendations.copy()
-        br["code"] = br["code"].astype(str).str.zfill(6)
+        br["code"] = _normalize_code_for_merge(br["code"])
         br_pref = br[br["bank"].isin(bank_preferences)].copy() if bank_preferences else br.copy()
 
         bank_level = br_pref.groupby("code")["recommend_level"].max().rename("银行推荐等级").reset_index()
@@ -149,8 +154,8 @@ def bank_recommendation_view(bank_recommendations: pd.DataFrame, fund_master: pd
     if bank_recommendations is None or bank_recommendations.empty:
         return pd.DataFrame()
     br = bank_recommendations.copy()
-    br["code"] = br["code"].astype(str).str.zfill(6)
+    br["code"] = _normalize_code_for_merge(br["code"])
     fm = fund_master.copy()
-    fm["code"] = fm["code"].astype(str).str.zfill(6)
+    fm["code"] = _normalize_code_for_merge(fm["code"])
     cols = ["code", "name", "company", "asset_class", "fund_type", "theme", "risk_level"]
     return br.merge(fm[cols], on="code", how="left")

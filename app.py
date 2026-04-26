@@ -152,10 +152,18 @@ preference_ranked_funds = score_by_preferences(
 )
 
 recommendations = attach_suitability(engine_result["recommendations"], master, family_profile.risk_preference)
+
+# Render/Pandas may read fund codes as integers in one table and strings in another.
+# Normalize both sides before merging preference information to avoid dtype mismatch.
+if not recommendations.empty and "基金代码" in recommendations.columns:
+    recommendations["基金代码"] = recommendations["基金代码"].astype(str).str.replace(r"\\.0$", "", regex=True).str.zfill(6)
+
 if not recommendations.empty and not preference_ranked_funds.empty:
     pref_cols = ["code", "家庭综合分", "偏好加分", "偏好匹配说明", "推荐银行", "银行推荐理由", "银行标签"]
     pref_cols = [c for c in pref_cols if c in preference_ranked_funds.columns]
-    pref_map = preference_ranked_funds[pref_cols].rename(columns={"code": "基金代码"})
+    pref_map = preference_ranked_funds[pref_cols].copy()
+    pref_map["code"] = pref_map["code"].astype(str).str.replace(r"\\.0$", "", regex=True).str.zfill(6)
+    pref_map = pref_map.rename(columns={"code": "基金代码"})
     recommendations = recommendations.merge(pref_map, on="基金代码", how="left")
 
 industry_df = industry_exposure(recommendations, holdings_df)
