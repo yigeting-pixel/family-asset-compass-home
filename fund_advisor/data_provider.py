@@ -4,6 +4,16 @@ from pathlib import Path
 import pandas as pd
 
 
+def normalize_fund_code_series(series: pd.Series) -> pd.Series:
+    """Return fund codes as zero-padded strings.
+
+    Render/Pandas may infer CSV fund codes as int64 in some files and strings in
+    others. Normalizing at data loading time prevents merge errors throughout the
+    app, especially for keys such as code / 基金代码.
+    """
+    return series.astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(6)
+
+
 class BaseFundDataProvider:
     """正式数据接入抽象层。
 
@@ -32,7 +42,10 @@ class LocalCSVFundDataProvider(BaseFundDataProvider):
         self.data_dir = Path(data_dir)
 
     def _read(self, filename: str) -> pd.DataFrame:
-        return pd.read_csv(self.data_dir / filename)
+        df = pd.read_csv(self.data_dir / filename, dtype={"code": "string"})
+        if "code" in df.columns:
+            df["code"] = normalize_fund_code_series(df["code"])
+        return df
 
     def fund_master(self) -> pd.DataFrame:
         return self._read("fund_master.csv")
