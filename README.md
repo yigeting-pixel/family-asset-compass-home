@@ -122,3 +122,29 @@ GITHUB_PUBLISH.md
 - 用户只需输入持仓金额和当前盈亏
 - 当前盈亏支持正负数：盈利填正数，亏损填负数
 - 上传 CSV 支持字段：基金代码, 持仓金额（万元）, 当前盈亏（万元）
+
+## v13 云端同步版
+
+新增：
+- cloud_app.py：云端同步工作台
+- api/cloud_main.py：云端 API
+- fund_advisor/cloud_store.py：云端数据库层
+- fund_advisor/fund_data_refresh.py：基金数据刷新层
+- fund_advisor/market_environment.py：外部环境建议层
+- jobs/refresh_data.py：定时刷新任务
+- render.cloud.yaml：Render 云端版部署配置
+
+本地启动云端版：
+```bash
+streamlit run cloud_app.py
+```
+
+本地启动云端 API：
+```bash
+uvicorn api.cloud_main:app --reload --host 0.0.0.0 --port 8000
+```
+
+手动刷新基金和环境数据：
+```bash
+python jobs/refresh_data.py
+```
