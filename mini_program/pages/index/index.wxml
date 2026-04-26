@@ -1,0 +1,7 @@
+<view class="container">
+  <view class="title">家庭资产小管家</view>
+  <view class="card">
+    <text>友好、私密的家庭资产评估工具。先看安全垫，再看基金组合。</text>
+  </view>
+  <button bindtap="requestAssessment">开始家庭体检</button>
+</view>
