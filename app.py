@@ -23,10 +23,10 @@ from fund_advisor.fund_preferences import (
 )
 
 
-st.set_page_config(page_title="家庭资产小管家 v9", page_icon="🏡", layout="wide")
+st.set_page_config(page_title="家庭资产小管家 v12", page_icon="🏡", layout="wide")
 
-st.title("🏡 家庭资产小管家 v9")
-st.caption("友好、私密、本地优先。新增题材偏好、基金公司品牌和银行推荐信息。")
+st.title("🏡 家庭资产小管家 v12")
+st.caption("友好、私密、本地优先。金额按万元输入；输入基金代码自动匹配基金名称，并支持录入当前盈亏。")
 
 st.info(PRIVACY_STATEMENT)
 
@@ -37,6 +37,61 @@ companies = sorted(master["company"].unique().tolist())
 themes = sorted(master["theme"].unique().tolist())
 bank_recs = load_bank_recommendations("data")
 banks = sorted(bank_recs["bank"].dropna().unique().tolist()) if not bank_recs.empty else []
+
+
+def normalize_code_value(value) -> str:
+    if pd.isna(value):
+        return ""
+    return str(value).strip().replace(".0", "").zfill(6)
+
+master_for_lookup = master.copy()
+master_for_lookup["code"] = master_for_lookup["code"].astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(6)
+FUND_NAME_MAP = dict(zip(master_for_lookup["code"], master_for_lookup["name"]))
+
+def lookup_fund_name(code: str) -> str:
+    code = normalize_code_value(code)
+    return FUND_NAME_MAP.get(code, f"自定义基金 {code}") if code else ""
+
+def to_wan(value: float) -> float:
+    return float(value or 0) / 10000
+
+def from_wan(value: float) -> float:
+    return float(value or 0) * 10000
+
+def fmt_wan(value: float, digits: int = 2) -> str:
+    return f"{to_wan(value):,.{digits}f} 万元"
+
+def holdings_to_editor_df(df: pd.DataFrame) -> pd.DataFrame:
+    try:
+        norm = normalize_current_holdings(df)
+    except Exception:
+        norm = pd.DataFrame(columns=["code", "name", "amount", "cost_amount", "profit_amount"])
+    if norm.empty:
+        return pd.DataFrame(columns=["基金代码", "基金名称", "持仓金额（万元）", "当前盈亏（万元）", "当前盈亏率"])
+    out = pd.DataFrame({
+        "基金代码": norm["code"].astype(str).str.zfill(6),
+        "基金名称": norm["code"].map(lookup_fund_name).fillna(norm["name"]),
+        "持仓金额（万元）": norm["amount"].astype(float) / 10000,
+        "当前盈亏（万元）": norm["profit_amount"].astype(float) / 10000,
+    })
+    cost = norm["cost_amount"].replace(0, pd.NA)
+    out["当前盈亏率"] = (norm["profit_amount"] / cost).fillna(0.0)
+    return out
+
+def editor_df_to_holdings(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["code", "name", "amount", "cost_amount", "profit_amount"])
+    out = df.copy()
+    if "基金代码" not in out.columns:
+        return normalize_current_holdings(out)
+    out["基金代码"] = out["基金代码"].map(normalize_code_value)
+    out = out[out["基金代码"].astype(str).str.len() > 0].copy()
+    out["基金名称"] = out["基金代码"].map(lookup_fund_name)
+    out["持仓金额（万元）"] = pd.to_numeric(out.get("持仓金额（万元）", 0), errors="coerce").fillna(0.0)
+    out["当前盈亏（万元）"] = pd.to_numeric(out.get("当前盈亏（万元）", 0), errors="coerce").fillna(0.0)
+    internal = pd.DataFrame({"code": out["基金代码"], "name": out["基金名称"], "amount": out["持仓金额（万元）"] * 10000, "profit_amount": out["当前盈亏（万元）"] * 10000})
+    internal["cost_amount"] = (internal["amount"] - internal["profit_amount"]).clip(lower=0.0)
+    return internal[internal["amount"] > 0][["code", "name", "amount", "cost_amount", "profit_amount"]]
 
 if "family_profile" not in st.session_state:
     st.session_state.family_profile = FamilyProfile()
@@ -66,7 +121,7 @@ tabs = st.tabs([
 
 with tabs[0]:
     st.subheader("我的家庭信息")
-    st.write("这里不需要输入姓名、手机号等敏感信息。可以用“我家”“父母家”“教育金账户”等昵称。")
+    st.write("这里不需要输入姓名、手机号等敏感信息。金额统一按万元填写，例如 100 表示 100 万元。")
 
     p = st.session_state.family_profile
     col1, col2, col3 = st.columns(3)
@@ -77,14 +132,14 @@ with tabs[0]:
         p.elders = st.number_input("需赡养老人数", min_value=0, max_value=8, value=p.elders)
         p.city = st.text_input("所在城市，可不填", value=p.city)
     with col2:
-        p.annual_income = st.number_input("家庭年收入", min_value=0.0, value=float(p.annual_income), step=10000.0)
-        p.annual_expense = st.number_input("家庭年支出", min_value=0.0, value=float(p.annual_expense), step=10000.0)
-        p.investable_assets = st.number_input("可用于投资的钱", min_value=0.0, value=float(p.investable_assets), step=10000.0)
-        p.cash = st.number_input("现金/活期/货币基金", min_value=0.0, value=float(p.cash), step=10000.0)
+        p.annual_income = from_wan(st.number_input("家庭年收入（万元）", min_value=0.0, value=to_wan(p.annual_income), step=1.0))
+        p.annual_expense = from_wan(st.number_input("家庭年支出（万元）", min_value=0.0, value=to_wan(p.annual_expense), step=1.0))
+        p.investable_assets = from_wan(st.number_input("可用于投资的钱（万元）", min_value=0.0, value=to_wan(p.investable_assets), step=1.0))
+        p.cash = from_wan(st.number_input("现金/活期/货币基金（万元）", min_value=0.0, value=to_wan(p.cash), step=1.0))
     with col3:
-        p.debt = st.number_input("贷款余额", min_value=0.0, value=float(p.debt), step=10000.0)
-        p.annual_debt_payment = st.number_input("年度还款额", min_value=0.0, value=float(p.annual_debt_payment), step=10000.0)
-        p.liquidity_need_3y = st.number_input("未来3年要用的钱", min_value=0.0, value=float(p.liquidity_need_3y), step=10000.0)
+        p.debt = from_wan(st.number_input("贷款余额（万元）", min_value=0.0, value=to_wan(p.debt), step=1.0))
+        p.annual_debt_payment = from_wan(st.number_input("年度还款额（万元）", min_value=0.0, value=to_wan(p.annual_debt_payment), step=1.0))
+        p.liquidity_need_3y = from_wan(st.number_input("未来3年要用的钱（万元）", min_value=0.0, value=to_wan(p.liquidity_need_3y), step=1.0))
         p.horizon_years = st.slider("长期资金可投资几年", 1, 20, int(p.horizon_years))
 
     st.subheader("风险和目标")
@@ -103,16 +158,37 @@ with tabs[0]:
     st.session_state.family_profile = p
 
     st.subheader("当前持有的基金，可选")
+    st.write("输入基金代码后会自动匹配基金名称。持仓金额和当前盈亏都按万元填写，亏损请填负数。")
     input_mode = st.radio("持仓输入方式", ["使用样例", "手动编辑", "上传CSV"], horizontal=True)
     current_df = st.session_state.current_holdings
     if input_mode == "上传CSV":
-        uploaded = st.file_uploader("CSV 字段：code,name,amount,cost_amount", type=["csv"])
+        uploaded = st.file_uploader("CSV 字段建议：基金代码, 持仓金额（万元）, 当前盈亏（万元）", type=["csv"])
         if uploaded is not None:
             current_df = pd.read_csv(uploaded)
     elif input_mode == "手动编辑":
-        current_df = st.data_editor(current_df, num_rows="dynamic", use_container_width=True, key="family_holdings_editor")
+        editor_df = holdings_to_editor_df(current_df)
+        edited = st.data_editor(
+            editor_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            key="family_holdings_editor",
+            column_config={
+                "基金代码": st.column_config.TextColumn("基金代码", help="输入 6 位基金代码，名称会自动匹配"),
+                "基金名称": st.column_config.TextColumn("基金名称", disabled=True),
+                "持仓金额（万元）": st.column_config.NumberColumn("持仓金额（万元）", min_value=0.0, step=0.1, format="%.2f"),
+                "当前盈亏（万元）": st.column_config.NumberColumn("当前盈亏（万元）", step=0.1, format="%.2f"),
+                "当前盈亏率": st.column_config.NumberColumn("当前盈亏率", disabled=True, format="%.2f%%"),
+            },
+        )
+        current_df = editor_df_to_holdings(edited)
     st.session_state.current_holdings = current_df
-    st.dataframe(current_df, use_container_width=True, hide_index=True)
+    display_holdings = holdings_to_editor_df(current_df)
+    if not display_holdings.empty:
+        show_holdings = display_holdings.copy()
+        show_holdings["当前盈亏率"] = show_holdings["当前盈亏率"].map(lambda x: f"{x:.1%}")
+        st.dataframe(show_holdings, use_container_width=True, hide_index=True)
+    else:
+        st.info("暂未录入基金持仓。")
 
 
 family_profile = st.session_state.family_profile
@@ -183,6 +259,15 @@ with tabs[1]:
     c4.metric("储蓄率", f"{assessment['metrics']['储蓄率']:.1%}")
     st.write(assessment["summary"])
 
+    st.subheader("关键金额")
+    st.dataframe(pd.DataFrame([
+        {"项目": "家庭年收入", "金额": fmt_wan(family_profile.annual_income)},
+        {"项目": "家庭年支出", "金额": fmt_wan(family_profile.annual_expense)},
+        {"项目": "可投资资产", "金额": fmt_wan(family_profile.investable_assets)},
+        {"项目": "现金/活期/货币基金", "金额": fmt_wan(family_profile.cash)},
+        {"项目": "未来3年要用的钱", "金额": fmt_wan(family_profile.liquidity_need_3y)},
+    ]), use_container_width=True, hide_index=True)
+
     score_df = pd.DataFrame([{"项目": k, "得分": v} for k, v in assessment["score_parts"].items()])
     st.bar_chart(score_df.set_index("项目"))
 
@@ -201,7 +286,7 @@ with tabs[2]:
     st.subheader("三笔钱规划")
     bucket_df = pd.DataFrame(money_buckets(family_profile, allocation))
     bucket_show = bucket_df.copy()
-    bucket_show["建议金额"] = bucket_show["建议金额"].map(lambda x: f"{x:,.0f}")
+    bucket_show["建议金额"] = bucket_show["建议金额"].map(lambda x: fmt_wan(x))
     st.dataframe(bucket_show, use_container_width=True, hide_index=True)
 
     st.subheader("建议大类配置")
@@ -211,7 +296,7 @@ with tabs[2]:
     ])
     show_alloc = alloc_df.copy()
     show_alloc["建议比例"] = show_alloc["建议比例"].map(lambda x: f"{x:.1%}")
-    show_alloc["建议金额"] = show_alloc["建议金额"].map(lambda x: f"{x:,.0f}")
+    show_alloc["建议金额"] = show_alloc["建议金额"].map(lambda x: fmt_wan(x))
     st.dataframe(show_alloc, use_container_width=True, hide_index=True)
 
     st.subheader("每一类资产的作用")
@@ -280,7 +365,7 @@ with tabs[4]:
     else:
         show_rec = recommendations.copy()
         show_rec["目标比例"] = show_rec["目标比例"].map(lambda x: f"{x:.1%}")
-        show_rec["配置金额"] = show_rec["配置金额"].map(lambda x: f"{x:,.0f}")
+        show_rec["配置金额"] = show_rec["配置金额"].map(lambda x: fmt_wan(x))
         for col in ["近1年", "最大回撤"]:
             if col in show_rec:
                 show_rec[col] = show_rec[col].map(lambda x: "" if pd.isna(x) else f"{x:.1%}")
@@ -319,15 +404,15 @@ with tabs[5]:
     )
     summary = summarize_rebalance(plan)
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("建议买入", f"{summary['buy_total']:,.0f}")
-    c2.metric("建议卖出", f"{summary['sell_total']:,.0f}")
-    c3.metric("资金缺口", f"{summary['cash_gap']:,.0f}")
+    c1.metric("建议买入", fmt_wan(summary["buy_total"]))
+    c2.metric("建议卖出", fmt_wan(summary["sell_total"]))
+    c3.metric("资金缺口", fmt_wan(summary["cash_gap"]))
     c4.metric("观察项", summary["watch_count"])
 
     display_plan = plan.copy()
     for col in ["当前金额", "目标金额", "建议交易金额", "浮盈亏"]:
         if col in display_plan:
-            display_plan[col] = display_plan[col].map(lambda x: f"{x:,.0f}")
+            display_plan[col] = display_plan[col].map(lambda x: fmt_wan(x))
     for col in ["当前比例", "目标比例", "偏离比例", "浮盈亏比例"]:
         if col in display_plan:
             display_plan[col] = display_plan[col].map(lambda x: f"{x:.1%}")
@@ -342,7 +427,7 @@ with tabs[5]:
     batches = build_execution_batches(plan, batch_count=4)
     if not batches.empty:
         display_batches = batches.copy()
-        display_batches["本批金额"] = display_batches["本批金额"].map(lambda x: f"{x:,.0f}")
+        display_batches["本批金额"] = display_batches["本批金额"].map(lambda x: fmt_wan(x))
         st.dataframe(display_batches, use_container_width=True, hide_index=True)
 
 
@@ -356,9 +441,9 @@ with tabs[6]:
     st.subheader("长期目标模拟")
     col1, col2, col3 = st.columns(3)
     with col1:
-        initial = st.number_input("初始投入", min_value=0.0, value=family_profile.investable_assets, step=10000.0)
+        initial = from_wan(st.number_input("初始投入（万元）", min_value=0.0, value=to_wan(family_profile.investable_assets), step=1.0))
     with col2:
-        monthly = st.number_input("每月追加", min_value=0.0, value=5000.0, step=1000.0)
+        monthly = from_wan(st.number_input("每月追加（万元）", min_value=0.0, value=0.5, step=0.1))
     with col3:
         expected = st.slider("假设年化收益", -5, 12, 4) / 100
 
@@ -366,8 +451,8 @@ with tabs[6]:
     if not projection.empty:
         st.line_chart(projection.set_index("年份")["预计资产"])
         show_proj = projection.copy()
-        show_proj["预计资产"] = show_proj["预计资产"].map(lambda x: f"{x:,.0f}")
-        show_proj["累计投入"] = show_proj["累计投入"].map(lambda x: f"{x:,.0f}")
+        show_proj["预计资产"] = show_proj["预计资产"].map(lambda x: fmt_wan(x))
+        show_proj["累计投入"] = show_proj["累计投入"].map(lambda x: fmt_wan(x))
         st.dataframe(show_proj, use_container_width=True, hide_index=True)
 
     st.subheader("家人可能会问")
@@ -383,6 +468,7 @@ with tabs[7]:
         "fund_preferences": st.session_state.fund_preferences,
         "recommendations": recommendations.to_dict(orient="records"),
         "industry_exposure": industry_df.to_dict(orient="records"),
+        "current_holdings": normalize_current_holdings(st.session_state.current_holdings).to_dict(orient="records"),
     }
 
     st.download_button(
@@ -400,6 +486,8 @@ with tabs[7]:
             st.session_state.family_profile = FamilyProfile(**{k: v for k, v in profile_data.items() if k in FamilyProfile.__dataclass_fields__})
             if "fund_preferences" in data:
                 st.session_state.fund_preferences = data["fund_preferences"]
+            if "current_holdings" in data:
+                st.session_state.current_holdings = pd.DataFrame(data["current_holdings"])
             st.success("已导入家庭评估记录。请刷新页面或切换标签查看。")
         except Exception as e:
             st.error(f"导入失败：{e}")
